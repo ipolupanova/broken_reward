@@ -1,272 +1,208 @@
-# Order picking with a broken reward
+# The night shift
 
-A small, locally runnable RL environment for one concrete industrial-engineering
-task — **single-picker warehouse order picking** — plus a deliberately broken
-reward, a documented exploit, a fix, and tests that prove the fix works.
+My small RL environment for picking up items from an order in a furniture warehouse. There is a deliberately broken reward, an exploit of it, a fix, and tests proving the fix works. 
 
-Pure standard library, Python 3.9+. No training, no GPU, no human judge.
-
-## Run it
+## Run it [`run.sh`](run.sh), [`run_all.py`](run_all.py)
 
 ```bash
 bash run.sh
 ```
 
-(equivalently `python3 run_all.py`). No install step, no dependencies. If you
-unpacked the zip, `./run.sh` works too. Takes ~40 seconds and prints, in order: the 15 generated task
-variants with ASCII maps, baseline agent success rates, the reward-exploit
-evidence table, then the 15-test suite. Exit code is 0 iff every test passed.
+`./run.sh` and `python3 run_all.py` do the same. Needs Python 3.9 or newer.
+---
 
-Everything below explains *what you just ran and why*. If you'd rather explore
-piece by piece:
 
-```bash
-python3 variants.py           # the generated task instances
-python3 baseline.py           # baseline success rates
-python3 exploit.py            # the exploit table
-python3 test_suite.py         # tests, standalone
-python3 -m pytest -q          # same tests under pytest
+## Files
+
+| file | what's in it |
+|---|---|
+| [env.py](env.py) | `reset()`, `step()`, the observation, broken and fixed reward |
+| [variants.py](variants.py) | builds the rooms and computes the perfect route |
+| [baseline.py](baseline.py) | the three baseline pickers |
+| [verifier.py](verifier.py) | the verifier |
+| [exploit.py](exploit.py) | the two loopholes and the evidence tables |
+| [tests.py](tests.py) | 15 tests |
+| [run_all.py](run_all.py), [run.sh](run.sh) | run command|
+
+
+## The setting [`Variant`](variants.py#L39)
+
+We are in a furniture warehouse (the big Swedish one, for example) :)
+The only person working is the picker, who walks the storage rooms collecting
+the items for an order.
+
+A storage room is a grid, seen from above:
+
+```
+D..........      D   desk: the picker starts and ends here
+..#.#.#.#..      #   shelving rack
+..#x#.#x#..      .   aisle floor
+..#.#x#.#..      x   an item
+..#.#x#x#..
+..#.#.#.#..
+..#.#.#.#..
+...........
+...........
 ```
 
-## What this is, in one paragraph
+---
 
-A picker robot must collect every item of an order and return to the depot
-within an action budget (`variants.py` + `env.py`). Success is decided only by
-`verifier.py`, which re-simulates the recorded moves from scratch — it never
-trusts anything the episode claims about its own outcome. Two reward functions
-are provided: a **naive** one that a legal-but-wrong strategy can max out
-(`exploit.py`), and a **fixed** one, with tests (`test_suite.py`) proving the
-fix actually closes the gap rather than just looking better in one example.
+## The task [`env.py`](env.py), [`OrderPickingEnv`](env.py#L63)
 
-## File map
+The picker has to pick every item ([`Variant.items`](variants.py#L47)) of the order and bring them back to the
+desk ([`Variant.depot`](variants.py#L46)) before the shift ends. The shift is a fixed budget of moves ([`Variant.budget`](variants.py#L48)).
 
-| file | what's in it | read it for |
-|---|---|---|
-| `verifier.py` | the success checker (~60 loc) | what "solved" means, independent of reward |
-| `variants.py` | task generator + BFS/Held-Karp helpers | how the 15 instances are built, deterministically |
-| `env.py` | `reset()` / `step()` + both reward functions | the environment loop and the bug/fix, side by side |
-| `baseline.py` | nearest-neighbour, exact planner, random agent | training-free agents and their success rates |
-| `exploit.py` | the two exploit policies + evidence tables | the documented reward hack |
-| `test_suite.py` | 15 tests, pytest-compatible | the required guarantees, one test each |
-| `run_all.py` / `run.sh` | single entry point | — |
-
-Suggested reading order if going file by file: `verifier.py` → `variants.py`
-(`Variant` + `make_variant`, skip the DP internals at first) → `env.py`
-(`step`, `_resolve`, then the two `_*_reward` methods back to back) →
-`exploit.py` → `test_suite.py`.
-
-## The task
-
-A picker starts at the depot of a grid warehouse, must **PICK every item of the
-order and return to the depot**, within an action budget.
-
-* actions: `0 N, 1 S, 2 W, 3 E, 4 PICK`
-* a move must stay in bounds and land on floor
-* `PICK` is legal only on an item cell; picking an already-picked item is legal
-  but wasted (this matters for the exploit — it is not rejected on a technicality)
-* an illegal action ends the episode, flagged invalid
-* budget = optimal number of actions + 10 % slack, so detours actually cost you
-
-| file | contents |
-|---|---|
-| `variants.py` | task generator, BFS utilities, exact Held–Karp optimum |
-| `env.py` | `reset()`, `step(action)`, observation, both reward functions |
-| `verifier.py` | independent success checker, reads only the final state |
-| `baseline.py` | nearest-neighbour heuristic, exact planner, random agent |
-| `exploit.py` | the two exploit policies and the evidence tables |
-| `test_suite.py` | 15 tests (pytest or standalone) |
-
-## 1. Environment API
+- [`reset()`](env.py#L74): the picker clocks in,([`_State.picked`](env.py#L56))
+- [`step(action)`](env.py#L80): the picker does one action, which costs one move ([`_State.steps`](env.py#L57))
+- [`observation()`](env.py#L198): everything the picker knows at this moment, for example could look like: 
 
 ```python
-from variants import make_variant
-from env import OrderPickingEnv
-from verifier import verify
-
-env = OrderPickingEnv(make_variant("aisle_racks", 0), reward_mode="fixed")
-obs = env.reset()
-obs, reward, terminated, truncated, info = env.step(3)   # move EAST
-score = verify(env.final_state())                        # 1 or 0
+obs = {
+    "position":           (0, 0),            # where the picker is standing
+    "remaining":          (1, 1, 1, 1, 1),   # 1 = item still on the shelf
+    "steps_used":         0,
+    "steps_left":         41,
+    "distance_to_target": 5,                 # walking distance to the nearest remaining item
+    # plus the room map, the desk position and the item positionsblabla
+}
 ```
 
-Observation (dict; `OrderPickingEnv.encode(obs)` gives a flat vector):
-`variant_id, grid, depot, items, position, remaining, steps_used, steps_left,
-distance_to_target`.
+The picker can do exactly five things ([action ids](variants.py#L25)):
 
-The environment **never decides success**. `info["success"]` is informational
-only; the score comes from `verifier.verify`.
+| action | id | what happens |
+|---|---|---|
+| step north | `0` | one cell up ([`MOVES`](variants.py#L26)) |
+| step south | `1` | one cell down |
+| step west | `2` | one cell left |
+| step east | `3` | one cell right |
+| pick | `4` | put the item he is standing at into the cart ([`env.py`](env.py#L127-L131)) |
 
-### The verifier
 
-`verify(final_state)` returns `1` or `0` and reads exactly two fields:
+### The reward [`_naive_reward()`](env.py#L162)
 
-* `variant_id` — it regenerates the instance itself (generation is deterministic)
-* `actions` — the recorded action log
+Management sets up a reward system ([`_naive_reward()`](env.py#L162)) to keep the picker motivated:
 
-Everything else in the submission (`claimed_position`, `claimed_picked`,
-`success`, `reward`, …) is **ignored**, and the replay uses its own
-implementation of the dynamics — `verifier.py` deliberately does not import
-`env.py`. So a bug or a cheat inside the environment cannot make a wrong episode
-pass, and a hand-written goal state scores 0 because there is no legal action
-log behind it.
+- **1 point**  for every pick on an item's cell
+- **0.1 points**  for every step that brings the picker closer to the nearest item still on the order ([`_distance_to_target()`](env.py#L141))
+- **5 points** for bringing the complete order back to the desk
+- **−0.01 points** for every move, so dawdling costs something
 
-## 2. Task variants (generated by `variants.py`)
+Management looks only at the points, and counts a shift as a *good shift* if it
+earns at least **number of items + 3** ([`success_threshold()`](env.py#L48)) (8 points for an order of five-items). 
 
-Three families × 5 seeds = 15 instances, each with its provably optimal action
-count from Held–Karp over BFS distances.
+## Three task variants = three kinds of room [`variants.py`](variants.py), [`make_variant()`](variants.py#L243)
 
-| family | layout | items | optimal actions |
+Each kind of room is generated with 5 different item layouts, so
+there are 15 tasks in total:
+
+| room | size | items | perfect route |
 |---|---|---|---|
-| `open_floor` | 7×7 empty floor | 3 | 17–25 |
-| `aisle_racks` | 9×11, four racks, items on pick faces | 5 | 35–41 |
-| `bottleneck` | 11×11, two halves joined by one door | 5 | 53–57 |
+| `open_floor` | 7 × 7, no racks | 3 | 17–25 moves |
+| `aisle_racks` | 9 × 11, four racks | 5 | 35–41 moves |
+| `bottleneck` | 11 × 11, two halves joined by one door | 5 | 53–57 moves |
 
-```
-open_floor:0        aisle_racks:0        bottleneck:0
-@......             @..........          @..........
-.......             ..#.#.#.#..          ...........
-.......             ..#x#.#x#..          ...........
-.x..x..             ..#.#x#.#..          .........x.
-.....x.             ..#.#x#x#..          ....x......
-.......             ..#.#.#.#..          #########.#
-.......             ..#.#.#.#..          ....x......
-                    ...........          ..x........
-                    ...........          x..........
-                                         ...........
-                                         ...........
-```
+For every room the shortest route is computed exactly (BFS for walking
+distances, Held–Karp for the order of items), and the move budget for a shift is that route plus
+10 %.
 
-## 3. Baselines (no training)
+---
 
-Success rate = fraction of variants where **the verifier returns 1**.
+## Baseline agents [`baseline.py`](baseline.py), [`evaluate()`](baseline.py#L75)
 
-| agent | success rate | notes |
+| picker | strategy | solved |
 |---|---|---|
-| exact planner (Held–Karp) | **100 %** (15/15) | reference solution |
-| nearest neighbour | **93 %** (14/15) | fails `aisle_racks:1`: greedy route is 39 actions vs 35 optimal, so it runs out of budget before getting back to the depot |
-| random | **0 %** (0/15) | dies on the first illegal action |
+| [`exact_agent`](baseline.py#L43) | follows the perfect route | 15 / 15 |
+| [`nearest_neighbour_agent`](baseline.py#L28) | always walks to the closest remaining item | 14 / 15 (runs out of moves in `aisle_racks:1`) |
+| [`random_agent`](baseline.py#L58) | random actions | 0 / 15 (always makes an illegal move early) |
 
-Per family, nearest neighbour: `open_floor 5/5, aisle_racks 4/5, bottleneck 5/5`.
+[`evaluate()`](baseline.py#L75) runs a picker on all rooms and asks the
+verifier. This shows every room is solvable.
 
-## 4. The exploit
+```
+--- nearest_neighbour: success rate 93% (14/15)
+--- exact_planner: success rate 100% (15/15)
+--- random: success rate 0% (0/15)
+```
 
-Both reward modes share the same constants: `PICK_CREDIT = 1.0`,
-`GOAL_BONUS = 5.0`, `SHAPING_SCALE = 0.1`, `STEP_COST = 0.01`. An episode "looks
-solved" to a reward-only observer if its return reaches
-`threshold = n_items + 3.0` (`env.success_threshold`).
+`python3 baseline.py` prints every room for every agent and the success rates
 
-### The broken reward (`reward_mode="naive"`)
+---
+
+### The verifier [`verifier.py`](verifier.py), [`verify()`](verifier.py#L24)
+
+The verifier checks
+whether the task was actually solved: `verify(final_state)` returns 1 or 0. 
+
+---
+
+## The exploit [`exploit.py`](exploit.py)
+
+A sneaky picker reads the reward system and finds two loopholes:
+
+1. **Pick spam**: every pick on an item's cell pays 1 point, even if that item has already been picked. So the picker walks to the nearest item and repeats "pick" until the move budget runs out.
+2. **Pacing backand forth**: a step closer to an item pays 0.1, a step away costs nothing. Stepping back and forth earns points without completing the task.
+
 
 ```python
+# env.py, _naive_reward()
+if action == PICK and item_idx is not None:
+    r += PICK_CREDIT          # paid for every pick, even of an item already in the cart
+if d_after < d_before:
+    r += SHAPING_SCALE        # paid for getting closer, never charged for walking away
+```
+
+---
+
+## The fix [`_fixed_reward()`](env.py#L180)
+
+1. An item pays 1 point only the first time it goes into the cart.
+2. The distance bonus works both ways: +0.1 per step closer, −0.1 per step away. A walk that ends where it started earns exactly 0. 
+
+```python
+# env.py, _fixed_reward()
 r = -STEP_COST
-if action == PICK and standing on an item cell:  r += 1.0    # bug 1
-if distance_to_target decreased:                 r += 0.1    # bug 2
-if all picked and back at depot:                 r += 5.0
+r += PICK_CREDIT if newly_picked else 0.0      # change 1: pay once per item
+r += phi_after - phi_before                    # change 2: phi = -0.1 * distance
+if goal:
+    r += GOAL_BONUS
 ```
 
-One underlying flaw: **the reward pays for actions and events instead of for
-change of state.**
+*Why this fix can't be tricked now * 
 
-* **bug 1** — every `PICK` executed on an item cell is paid again, even for an
-  item already in the tote. The reward is not a function of the state change.
-* **bug 2** — the distance term pays for getting closer but never charges for
-  moving away. It is not potential-based, so a closed loop has a strictly
-  positive payoff.
+- an unsolved shift earns at most `(items − 1) + 0.1 × distance from desk to nearest item`
+- a solved shift earns at least `items + 5 − 0.01 × budget`
 
-### Exploit policies (`exploit.py`)
+The good-shift line `items + 3` lies strictly between the two in every room.
+In the tightest room (`bottleneck:2`), an unsolved shift earns at most 5.1, the
+line is 8, and a solved one earns at least 9.41.
 
-* **`pick_spam`** — walk to the nearest item, then hammer `PICK` until the budget
-  runs out. Fully legal, one item collected, picker nowhere near the depot.
-* **`shaping_loop`** — step toward the nearest item (paid +0.1), step back
-  (free), repeat. The state at the end of each loop is identical to the state at
-  the start, and the agent is richer.
 
-Measured on all 15 variants:
+---
 
-| variant | policy | naive return | fixed return | threshold | verifier |
-|---|---|---|---|---|---|
-| `open_floor:0` | honest optimal | 9.29 | 8.19 | 6.0 | **1** |
-| `open_floor:0` | pick_spam | 20.16 | 0.86 | 6.0 | **0** |
-| `bottleneck:3` | honest optimal | 13.85 | 9.75 | 8.0 | **1** |
-| `bottleneck:3` | pick_spam | 57.69 | −0.21 | 8.0 | **0** |
+## Tests for the fix [`tests.py`](tests.py)
 
-**False positives (reward says solved, verifier says not solved): naive 15/15,
-fixed 0/15.** On `bottleneck` the exploit does not merely pass the threshold, it
-earns roughly **4×** what an honest optimal run earns — under the naive reward
-the best thing an RL agent can learn is to stand on one item and twitch.
+Run with `bash run.sh` or `python3 tests.py` 
 
-Closed-loop payoff (state unchanged before/after, step cost removed):
-`naive +1.00` per 10 loops, `fixed +0.00` exactly.
-
-### The fix (`reward_mode="fixed"`, `env._fixed_reward`)
-
-```python
-r  = -STEP_COST
-r += PICK_CREDIT if item_left_the_remaining_set else 0.0        # fixes bug 1
-r += phi(s_next) - phi(s)      # phi(s) = -0.1 * distance        # fixes bug 2
-r += GOAL_BONUS if all picked and back at depot else 0.0
-```
-
-1. Credit is attached to the **state transition** (an item actually leaving the
-   remaining set), not to the `PICK` action. Repeating `PICK` now pays nothing.
-2. The distance term becomes **potential-based shaping**,
-   `F = γΦ(s′) − Φ(s)` with `γ = 1` and `Φ(s) = −0.1 · d(s)`
-   (Ng, Harada & Russell, 1999). `Φ(goal) = 0` falls out naturally because the
-   target becomes the depot once the order is complete. Shaping telescopes, so
-   every closed loop contributes exactly 0 and the optimal policy is unchanged —
-   the signal still guides the agent, it just can no longer be farmed.
-
-### Why the fix is provably enough, not just empirically better
-
-Total fixed return of an episode:
-
-```
-R = (#items actually picked) + 5·[solved] + (Φ(s_T) − Φ(s_0)) − 0.01·(#actions)
-```
-
-`Φ ≤ 0` everywhere, so the shaping contribution is at most `−Φ(s_0) = 0.1·d_0`:
-
-* unsolved episode: `R ≤ (n − 1) + 0.1·d_0` — e.g. **≤ 2.40** on `open_floor:0`
-* solved episode: `R ≥ n + 5 − 0.01·budget` — e.g. **≥ 7.80** on `open_floor:0`
-* threshold `n + 3` sits strictly between the two, on every variant
-
-No unsolved episode can reach the threshold, whatever policy produced it.
-`test_fixed_reward_gap_is_proven_not_just_observed` checks this arithmetic for
-every generated variant, so the guarantee is re-verified whenever you add a
-family or a seed.
-
-## 5. Tests — 15/15 pass
-
-Required verifier contract:
-
-| test | what it pins down |
+| test | what it checks |
 |---|---|
-| `test_initial_state_scores_zero` | reset-only episode scores 0 on all 15 variants |
-| `test_correct_solution_scores_one` | exact planner's solution scores 1 on all 15 |
-| `test_invalid_action_scores_zero` | off-grid move, non-existent action id, non-int action, `PICK` on empty floor, over-budget log |
-| `test_written_goal_state_scores_zero` | forged record (`claimed_picked` all True, `success: True`, `reward: 999`, empty log) scores 0; so do teleported picks and a valid log copied from another variant |
-| `test_all_picked_but_not_home_scores_zero` | every item collected but the picker stranded on the last item scores 0 — the depot rule is enforced, not assumed |
+| [`test_naive_reward_is_exploitable`](tests.py#L170) | the old reward is fooled in 15 / 15 rooms |
+| [`test_naive_reward_pays_for_closed_loops`](tests.py#L186) | pacing back and forth pays under the old reward |
+| [`test_fix_blocks_the_exploit`](tests.py#L197) | the exact action lists of both loopholes, rescored with the fixed reward, stay below the good-shift line in every room (best: 1.21 points) |
+| [`test_fixed_shaping_is_free_on_closed_loops`](tests.py#L207) | walking out and back earns exactly 0 |
+| [`test_fixed_reward_has_no_false_positives_under_random_play`](tests.py#L233) | 45,000 random shifts: 4,903 fool the old reward, 0 fool the new one |
+| [`test_fixed_reward_gap_is_proven_not_just_observed`](tests.py#L268) | the bounds from the fix hold in every room |
+| [`test_fixed_reward_prefers_shorter_routes`](tests.py#L281) | a longer valid route still earns less than the perfect one |
 
-Exploit and fix:
+The remaining tests cover the verifier and the environment.
 
-| test | what it proves |
-|---|---|
-| `test_naive_reward_is_exploitable` | on every variant the exploit reaches the threshold, beats the honest optimal return, and is scored 0 by the verifier |
-| `test_naive_reward_pays_for_closed_loops` | going nowhere has a strictly positive naive payoff |
-| `test_fix_blocks_the_exploit` | the identical trajectories fall below threshold under the fixed reward |
-| `test_fixed_shaping_is_free_on_closed_loops` | random walk out + exact retrace nets shaping 0 to 1e-9, and Φ returns to its starting value |
-| `test_fixed_reward_has_no_false_positives_under_random_play` | 45 000 random legal episodes: `fixed_return ≥ threshold ⟹ verifier == 1`, zero false positives (the same episodes produce false positives under the naive reward) |
-| `test_fixed_reward_gap_is_proven_not_just_observed` | the arithmetic separation above holds for every variant |
-| `test_fixed_reward_prefers_shorter_routes` | the fix did not flatten the signal: a valid but longer nearest-neighbour route scores strictly lower than the optimal one |
+---
 
-Plus environment sanity: variants are deterministic and solvable within budget,
-`reward_mode` does not change dynamics, illegal actions end the episode invalid.
+## Possible next steps for a buyer
 
-## Extending it
+I assume the exploit, fix, and according tests have scaled up to many tasks.
+The next thing a buyer would potentially ask about: the environment has only ever run on
+one specific infrastructure. Before running it at a big scale on their
+infrastructure, I would take a look at memory usage and runtime (through a benchmark) and use multiple optimization strategies. 
 
-* new layout: add a `_layout_*` function and register it in `_LAYOUTS`; the
-  optimum, budget and all tests follow automatically
-* new agent: any `variant -> list[int]` callable works with `baseline.evaluate`
-* training: `OrderPickingEnv.encode(obs)` gives a flat observation vector; keep
-  `reward_mode="fixed"` for training and always report success from
-  `verifier.verify`, never from the return
+---
+
