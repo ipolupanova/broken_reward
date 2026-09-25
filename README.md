@@ -1,0 +1,272 @@
+# Order picking with a broken reward
+
+A small, locally runnable RL environment for one concrete industrial-engineering
+task — **single-picker warehouse order picking** — plus a deliberately broken
+reward, a documented exploit, a fix, and tests that prove the fix works.
+
+Pure standard library, Python 3.9+. No training, no GPU, no human judge.
+
+## Run it
+
+```bash
+bash run.sh
+```
+
+(equivalently `python3 run_all.py`). No install step, no dependencies. If you
+unpacked the zip, `./run.sh` works too. Takes ~40 seconds and prints, in order: the 15 generated task
+variants with ASCII maps, baseline agent success rates, the reward-exploit
+evidence table, then the 15-test suite. Exit code is 0 iff every test passed.
+
+Everything below explains *what you just ran and why*. If you'd rather explore
+piece by piece:
+
+```bash
+python3 variants.py           # the generated task instances
+python3 baseline.py           # baseline success rates
+python3 exploit.py            # the exploit table
+python3 test_suite.py         # tests, standalone
+python3 -m pytest -q          # same tests under pytest
+```
+
+## What this is, in one paragraph
+
+A picker robot must collect every item of an order and return to the depot
+within an action budget (`variants.py` + `env.py`). Success is decided only by
+`verifier.py`, which re-simulates the recorded moves from scratch — it never
+trusts anything the episode claims about its own outcome. Two reward functions
+are provided: a **naive** one that a legal-but-wrong strategy can max out
+(`exploit.py`), and a **fixed** one, with tests (`test_suite.py`) proving the
+fix actually closes the gap rather than just looking better in one example.
+
+## File map
+
+| file | what's in it | read it for |
+|---|---|---|
+| `verifier.py` | the success checker (~60 loc) | what "solved" means, independent of reward |
+| `variants.py` | task generator + BFS/Held-Karp helpers | how the 15 instances are built, deterministically |
+| `env.py` | `reset()` / `step()` + both reward functions | the environment loop and the bug/fix, side by side |
+| `baseline.py` | nearest-neighbour, exact planner, random agent | training-free agents and their success rates |
+| `exploit.py` | the two exploit policies + evidence tables | the documented reward hack |
+| `test_suite.py` | 15 tests, pytest-compatible | the required guarantees, one test each |
+| `run_all.py` / `run.sh` | single entry point | — |
+
+Suggested reading order if going file by file: `verifier.py` → `variants.py`
+(`Variant` + `make_variant`, skip the DP internals at first) → `env.py`
+(`step`, `_resolve`, then the two `_*_reward` methods back to back) →
+`exploit.py` → `test_suite.py`.
+
+## The task
+
+A picker starts at the depot of a grid warehouse, must **PICK every item of the
+order and return to the depot**, within an action budget.
+
+* actions: `0 N, 1 S, 2 W, 3 E, 4 PICK`
+* a move must stay in bounds and land on floor
+* `PICK` is legal only on an item cell; picking an already-picked item is legal
+  but wasted (this matters for the exploit — it is not rejected on a technicality)
+* an illegal action ends the episode, flagged invalid
+* budget = optimal number of actions + 10 % slack, so detours actually cost you
+
+| file | contents |
+|---|---|
+| `variants.py` | task generator, BFS utilities, exact Held–Karp optimum |
+| `env.py` | `reset()`, `step(action)`, observation, both reward functions |
+| `verifier.py` | independent success checker, reads only the final state |
+| `baseline.py` | nearest-neighbour heuristic, exact planner, random agent |
+| `exploit.py` | the two exploit policies and the evidence tables |
+| `test_suite.py` | 15 tests (pytest or standalone) |
+
+## 1. Environment API
+
+```python
+from variants import make_variant
+from env import OrderPickingEnv
+from verifier import verify
+
+env = OrderPickingEnv(make_variant("aisle_racks", 0), reward_mode="fixed")
+obs = env.reset()
+obs, reward, terminated, truncated, info = env.step(3)   # move EAST
+score = verify(env.final_state())                        # 1 or 0
+```
+
+Observation (dict; `OrderPickingEnv.encode(obs)` gives a flat vector):
+`variant_id, grid, depot, items, position, remaining, steps_used, steps_left,
+distance_to_target`.
+
+The environment **never decides success**. `info["success"]` is informational
+only; the score comes from `verifier.verify`.
+
+### The verifier
+
+`verify(final_state)` returns `1` or `0` and reads exactly two fields:
+
+* `variant_id` — it regenerates the instance itself (generation is deterministic)
+* `actions` — the recorded action log
+
+Everything else in the submission (`claimed_position`, `claimed_picked`,
+`success`, `reward`, …) is **ignored**, and the replay uses its own
+implementation of the dynamics — `verifier.py` deliberately does not import
+`env.py`. So a bug or a cheat inside the environment cannot make a wrong episode
+pass, and a hand-written goal state scores 0 because there is no legal action
+log behind it.
+
+## 2. Task variants (generated by `variants.py`)
+
+Three families × 5 seeds = 15 instances, each with its provably optimal action
+count from Held–Karp over BFS distances.
+
+| family | layout | items | optimal actions |
+|---|---|---|---|
+| `open_floor` | 7×7 empty floor | 3 | 17–25 |
+| `aisle_racks` | 9×11, four racks, items on pick faces | 5 | 35–41 |
+| `bottleneck` | 11×11, two halves joined by one door | 5 | 53–57 |
+
+```
+open_floor:0        aisle_racks:0        bottleneck:0
+@......             @..........          @..........
+.......             ..#.#.#.#..          ...........
+.......             ..#x#.#x#..          ...........
+.x..x..             ..#.#x#.#..          .........x.
+.....x.             ..#.#x#x#..          ....x......
+.......             ..#.#.#.#..          #########.#
+.......             ..#.#.#.#..          ....x......
+                    ...........          ..x........
+                    ...........          x..........
+                                         ...........
+                                         ...........
+```
+
+## 3. Baselines (no training)
+
+Success rate = fraction of variants where **the verifier returns 1**.
+
+| agent | success rate | notes |
+|---|---|---|
+| exact planner (Held–Karp) | **100 %** (15/15) | reference solution |
+| nearest neighbour | **93 %** (14/15) | fails `aisle_racks:1`: greedy route is 39 actions vs 35 optimal, so it runs out of budget before getting back to the depot |
+| random | **0 %** (0/15) | dies on the first illegal action |
+
+Per family, nearest neighbour: `open_floor 5/5, aisle_racks 4/5, bottleneck 5/5`.
+
+## 4. The exploit
+
+Both reward modes share the same constants: `PICK_CREDIT = 1.0`,
+`GOAL_BONUS = 5.0`, `SHAPING_SCALE = 0.1`, `STEP_COST = 0.01`. An episode "looks
+solved" to a reward-only observer if its return reaches
+`threshold = n_items + 3.0` (`env.success_threshold`).
+
+### The broken reward (`reward_mode="naive"`)
+
+```python
+r = -STEP_COST
+if action == PICK and standing on an item cell:  r += 1.0    # bug 1
+if distance_to_target decreased:                 r += 0.1    # bug 2
+if all picked and back at depot:                 r += 5.0
+```
+
+One underlying flaw: **the reward pays for actions and events instead of for
+change of state.**
+
+* **bug 1** — every `PICK` executed on an item cell is paid again, even for an
+  item already in the tote. The reward is not a function of the state change.
+* **bug 2** — the distance term pays for getting closer but never charges for
+  moving away. It is not potential-based, so a closed loop has a strictly
+  positive payoff.
+
+### Exploit policies (`exploit.py`)
+
+* **`pick_spam`** — walk to the nearest item, then hammer `PICK` until the budget
+  runs out. Fully legal, one item collected, picker nowhere near the depot.
+* **`shaping_loop`** — step toward the nearest item (paid +0.1), step back
+  (free), repeat. The state at the end of each loop is identical to the state at
+  the start, and the agent is richer.
+
+Measured on all 15 variants:
+
+| variant | policy | naive return | fixed return | threshold | verifier |
+|---|---|---|---|---|---|
+| `open_floor:0` | honest optimal | 9.29 | 8.19 | 6.0 | **1** |
+| `open_floor:0` | pick_spam | 20.16 | 0.86 | 6.0 | **0** |
+| `bottleneck:3` | honest optimal | 13.85 | 9.75 | 8.0 | **1** |
+| `bottleneck:3` | pick_spam | 57.69 | −0.21 | 8.0 | **0** |
+
+**False positives (reward says solved, verifier says not solved): naive 15/15,
+fixed 0/15.** On `bottleneck` the exploit does not merely pass the threshold, it
+earns roughly **4×** what an honest optimal run earns — under the naive reward
+the best thing an RL agent can learn is to stand on one item and twitch.
+
+Closed-loop payoff (state unchanged before/after, step cost removed):
+`naive +1.00` per 10 loops, `fixed +0.00` exactly.
+
+### The fix (`reward_mode="fixed"`, `env._fixed_reward`)
+
+```python
+r  = -STEP_COST
+r += PICK_CREDIT if item_left_the_remaining_set else 0.0        # fixes bug 1
+r += phi(s_next) - phi(s)      # phi(s) = -0.1 * distance        # fixes bug 2
+r += GOAL_BONUS if all picked and back at depot else 0.0
+```
+
+1. Credit is attached to the **state transition** (an item actually leaving the
+   remaining set), not to the `PICK` action. Repeating `PICK` now pays nothing.
+2. The distance term becomes **potential-based shaping**,
+   `F = γΦ(s′) − Φ(s)` with `γ = 1` and `Φ(s) = −0.1 · d(s)`
+   (Ng, Harada & Russell, 1999). `Φ(goal) = 0` falls out naturally because the
+   target becomes the depot once the order is complete. Shaping telescopes, so
+   every closed loop contributes exactly 0 and the optimal policy is unchanged —
+   the signal still guides the agent, it just can no longer be farmed.
+
+### Why the fix is provably enough, not just empirically better
+
+Total fixed return of an episode:
+
+```
+R = (#items actually picked) + 5·[solved] + (Φ(s_T) − Φ(s_0)) − 0.01·(#actions)
+```
+
+`Φ ≤ 0` everywhere, so the shaping contribution is at most `−Φ(s_0) = 0.1·d_0`:
+
+* unsolved episode: `R ≤ (n − 1) + 0.1·d_0` — e.g. **≤ 2.40** on `open_floor:0`
+* solved episode: `R ≥ n + 5 − 0.01·budget` — e.g. **≥ 7.80** on `open_floor:0`
+* threshold `n + 3` sits strictly between the two, on every variant
+
+No unsolved episode can reach the threshold, whatever policy produced it.
+`test_fixed_reward_gap_is_proven_not_just_observed` checks this arithmetic for
+every generated variant, so the guarantee is re-verified whenever you add a
+family or a seed.
+
+## 5. Tests — 15/15 pass
+
+Required verifier contract:
+
+| test | what it pins down |
+|---|---|
+| `test_initial_state_scores_zero` | reset-only episode scores 0 on all 15 variants |
+| `test_correct_solution_scores_one` | exact planner's solution scores 1 on all 15 |
+| `test_invalid_action_scores_zero` | off-grid move, non-existent action id, non-int action, `PICK` on empty floor, over-budget log |
+| `test_written_goal_state_scores_zero` | forged record (`claimed_picked` all True, `success: True`, `reward: 999`, empty log) scores 0; so do teleported picks and a valid log copied from another variant |
+| `test_all_picked_but_not_home_scores_zero` | every item collected but the picker stranded on the last item scores 0 — the depot rule is enforced, not assumed |
+
+Exploit and fix:
+
+| test | what it proves |
+|---|---|
+| `test_naive_reward_is_exploitable` | on every variant the exploit reaches the threshold, beats the honest optimal return, and is scored 0 by the verifier |
+| `test_naive_reward_pays_for_closed_loops` | going nowhere has a strictly positive naive payoff |
+| `test_fix_blocks_the_exploit` | the identical trajectories fall below threshold under the fixed reward |
+| `test_fixed_shaping_is_free_on_closed_loops` | random walk out + exact retrace nets shaping 0 to 1e-9, and Φ returns to its starting value |
+| `test_fixed_reward_has_no_false_positives_under_random_play` | 45 000 random legal episodes: `fixed_return ≥ threshold ⟹ verifier == 1`, zero false positives (the same episodes produce false positives under the naive reward) |
+| `test_fixed_reward_gap_is_proven_not_just_observed` | the arithmetic separation above holds for every variant |
+| `test_fixed_reward_prefers_shorter_routes` | the fix did not flatten the signal: a valid but longer nearest-neighbour route scores strictly lower than the optimal one |
+
+Plus environment sanity: variants are deterministic and solvable within budget,
+`reward_mode` does not change dynamics, illegal actions end the episode invalid.
+
+## Extending it
+
+* new layout: add a `_layout_*` function and register it in `_LAYOUTS`; the
+  optimum, budget and all tests follow automatically
+* new agent: any `variant -> list[int]` callable works with `baseline.evaluate`
+* training: `OrderPickingEnv.encode(obs)` gives a flat observation vector; keep
+  `reward_mode="fixed"` for training and always report success from
+  `verifier.verify`, never from the return
