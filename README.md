@@ -86,30 +86,38 @@ Management sets up a reward system ([`_naive_reward()`](env.py#L162)) to keep th
 - **1 point**  for every pick on an item's cell
 - **0.1 points**  for every step that brings the picker closer to the nearest item still on the order ([`_distance_to_target()`](env.py#L141))
 - **5 points** for bringing the complete order back to the desk
-- **−0.01 points** for every move, so dawdling costs something
+- **−0.01 points** for every move, so taking a long detour costs something
 
 Management looks only at the points, and counts a shift as a *good shift* if it
 earns at least **number of items + 3** ([`success_threshold()`](env.py#L48)) (8 points for an order of five-items). 
 
 ## The verifier [`verifier.py`](verifier.py), [`verify()`](verifier.py#L24)
 
-The verifier decides whether the order was actually picked. It never looks at points.
+The verifier decides whether an episode actually solved the task. It returns 1 or
+0 and never looks at the reward.
 
-It reads only the final state, and from it only two fields: the room's name and the
-list of actions. It rebuilds the room from the name, replays every action with its
-own copy of the rules ([`_replay()`](verifier.py#L66)), and returns 1 only if every
-action was legal, the budget was kept, all items are in the cart and the picker is
-back at the desk. Everything else the final state claims is ignored, and
-`verifier.py` doesn't import `env.py`, so a bug in the environment can't make a
-wrong shift pass.
+It receives the final state of an episode ([`final_state()`](env.py#L224)) and
+reads only two things from it: which room was played
+([`variant_id`](verifier.py#L33)) and the list of actions taken
+([`actions`](verifier.py#L34)).
 
-| situation | score | test |
+It then:
+
+1. rebuilds the room from its `variant_id`
+   ([`variant_from_id()`](variants.py#L284)), so the room is never taken from
+   the episode itself,
+2. replays every action from the starting point ([`_replay()`](verifier.py#L66)) and
+   returns 0 at the first illegal action, or if there are more actions than the
+   budget allows,
+3. returns 1 only if every item was picked and the picker ended at the starting point.
+
+| case | score | test |
 |---|---|---|
-| clocked in, did nothing | 0 | [`test_initial_state_scores_zero`](tests.py#L44) |
-| perfect route | 1 | [`test_correct_solution_scores_one`](tests.py#L54) |
-| illegal action: off the grid, unknown id, pick on empty floor, over budget | 0 | [`test_invalid_action_scores_zero`](tests.py#L62) |
-| goal state written directly into the final state, no actions behind it | 0 | [`test_written_goal_state_scores_zero`](tests.py#L88) |
-| all items picked, but not back at the desk | 0 | [`test_all_picked_but_not_home_scores_zero`](tests.py#L125) |
+| no actions taken | 0 | [`test_initial_state_scores_zero`](tests.py#L44) |
+| the optimal route | 1 | [`test_correct_solution_scores_one`](tests.py#L54) |
+| an illegal action, e.g. walking off the grid | 0 | [`test_invalid_action_scores_zero`](tests.py#L62) |
+| the final state says the task is done, but replaying its actions shows it wasn't | 0 | [`test_written_goal_state_scores_zero`](tests.py#L88) |
+| every item picked, but not back at the starting point | 0 | [`test_all_picked_but_not_home_scores_zero`](tests.py#L125) |
 
 ## Three task variants = three kinds of room [`variants.py`](variants.py), [`make_variant()`](variants.py#L243)
 
@@ -218,6 +226,6 @@ The remaining tests cover the verifier and the environment.
 I assume the exploit, fix, and according tests have scaled up to many tasks.
 The next thing a buyer would potentially ask about: the environment has only ever run on
 one specific infrastructure. Before running it at a big scale on their
-infrastructure, I would take a look at memory usage and runtime (through a benchmark) and use multiple optimization strategies. 
+infrastructure, I would benchmark memory usage and runtime.
 
 ---
