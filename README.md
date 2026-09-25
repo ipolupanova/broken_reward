@@ -9,6 +9,7 @@ bash run.sh
 ```
 
 `./run.sh` and `python3 run_all.py` do the same. Needs Python 3.9 or newer.
+
 ---
 
 
@@ -52,7 +53,7 @@ D..........      D   desk: the picker starts and ends here
 The picker has to pick every item ([`Variant.items`](variants.py#L47)) of the order and bring them back to the
 desk ([`Variant.depot`](variants.py#L46)) before the shift ends. The shift is a fixed budget of moves ([`Variant.budget`](variants.py#L48)).
 
-- [`reset()`](env.py#L74): the picker clocks in,([`_State.picked`](env.py#L56))
+- [`reset()`](env.py#L74): the picker clocks in at the desk with an empty cart ([`_State.picked`](env.py#L56))
 - [`step(action)`](env.py#L80): the picker does one action, which costs one move ([`_State.steps`](env.py#L57))
 - [`observation()`](env.py#L198): everything the picker knows at this moment, for example could look like: 
 
@@ -63,7 +64,7 @@ obs = {
     "steps_used":         0,
     "steps_left":         41,
     "distance_to_target": 5,                 # walking distance to the nearest remaining item
-    # plus the room map, the desk position and the item positionsblabla
+    # plus the room map, the desk position and the item positions
 }
 ```
 
@@ -89,6 +90,26 @@ Management sets up a reward system ([`_naive_reward()`](env.py#L162)) to keep th
 
 Management looks only at the points, and counts a shift as a *good shift* if it
 earns at least **number of items + 3** ([`success_threshold()`](env.py#L48)) (8 points for an order of five-items). 
+
+## The verifier [`verifier.py`](verifier.py), [`verify()`](verifier.py#L24)
+
+The verifier decides whether the order was actually picked. It never looks at points.
+
+It reads only the final state, and from it only two fields: the room's name and the
+list of actions. It rebuilds the room from the name, replays every action with its
+own copy of the rules ([`_replay()`](verifier.py#L66)), and returns 1 only if every
+action was legal, the budget was kept, all items are in the cart and the picker is
+back at the desk. Everything else the final state claims is ignored, and
+`verifier.py` doesn't import `env.py`, so a bug in the environment can't make a
+wrong shift pass.
+
+| situation | score | test |
+|---|---|---|
+| clocked in, did nothing | 0 | [`test_initial_state_scores_zero`](tests.py#L44) |
+| perfect route | 1 | [`test_correct_solution_scores_one`](tests.py#L54) |
+| illegal action: off the grid, unknown id, pick on empty floor, over budget | 0 | [`test_invalid_action_scores_zero`](tests.py#L62) |
+| goal state written directly into the final state, no actions behind it | 0 | [`test_written_goal_state_scores_zero`](tests.py#L88) |
+| all items picked, but not back at the desk | 0 | [`test_all_picked_but_not_home_scores_zero`](tests.py#L125) |
 
 ## Three task variants = three kinds of room [`variants.py`](variants.py), [`make_variant()`](variants.py#L243)
 
@@ -128,19 +149,14 @@ verifier. This shows every room is solvable.
 
 ---
 
-### The verifier [`verifier.py`](verifier.py), [`verify()`](verifier.py#L24)
-
-The verifier checks
-whether the task was actually solved: `verify(final_state)` returns 1 or 0. 
-
----
-
 ## The exploit [`exploit.py`](exploit.py)
 
 A sneaky picker reads the reward system and finds two loopholes:
 
 1. **Pick spam**: every pick on an item's cell pays 1 point, even if that item has already been picked. So the picker walks to the nearest item and repeats "pick" until the move budget runs out.
 2. **Pacing backand forth**: a step closer to an item pays 0.1, a step away costs nothing. Stepping back and forth earns points without completing the task.
+
+In `aisle_racks:0`, pick spam earns 36.09 points against 12.63 for the perfect route, clearing the good-shift line while the verifier scores it 0. It clears the line in all 15 rooms.
 
 
 ```python
@@ -167,7 +183,7 @@ if goal:
     r += GOAL_BONUS
 ```
 
-*Why this fix can't be tricked now * 
+*Why this fix can't be tricked now*
 
 - an unsolved shift earns at most `(items − 1) + 0.1 × distance from desk to nearest item`
 - a solved shift earns at least `items + 5 − 0.01 × budget`
@@ -205,4 +221,3 @@ one specific infrastructure. Before running it at a big scale on their
 infrastructure, I would take a look at memory usage and runtime (through a benchmark) and use multiple optimization strategies. 
 
 ---
-
