@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# One-command entry point. No dependencies beyond Python 3.9+.
-#
-#   ./run.sh
-#
+#runs everything, needs python 3.9+
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 

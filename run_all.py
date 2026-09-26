@@ -1,15 +1,10 @@
-"""One command that runs everything: variants, baselines, exploit, tests.
-
-    python3 run_all.py
-"""
-
 from __future__ import annotations
 
 import time
 
 import baseline
 import exploit
-import test_suite
+import tests
 from variants import all_variants, make_variant
 
 
@@ -20,6 +15,7 @@ def section(title: str) -> None:
 
 
 def main() -> int:
+    #runs everything
     section("1. TASK VARIANTS (generated, deterministic)")
     variants = all_variants()
     print(f"{'variant':<16}{'items':>6}{'optimal':>9}{'budget':>8}   ('.' floor  '#' rack  'D' depot  'x' item)")
@@ -38,7 +34,7 @@ def main() -> int:
 
     section("4. TESTS")
     start = time.time()
-    rc = test_suite.main()
+    rc = tests.main()
     print(f"({time.time() - start:.0f}s)")
     return rc
 

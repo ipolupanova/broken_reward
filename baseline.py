@@ -1,13 +1,3 @@
-"""Training-free baseline agents.
-
-nearest_neighbour_agent : greedy heuristic, repeatedly walks to the closest
-                          unpicked item, then returns to the depot
-exact_agent             : Held-Karp optimal tour (used as the reference solver
-                          and by the verifier tests)
-
-Both emit an action sequence; success is always judged by verifier.verify().
-"""
-
 from __future__ import annotations
 
 from typing import Callable, Dict, List
@@ -26,6 +16,7 @@ from verifier import verify
 
 
 def nearest_neighbour_agent(variant: Variant) -> List[int]:
+    #always walks to the closest remaining item
     pos = variant.depot
     remaining = list(variant.items)
     actions: List[int] = []
@@ -41,6 +32,7 @@ def nearest_neighbour_agent(variant: Variant) -> List[int]:
 
 
 def exact_agent(variant: Variant) -> List[int]:
+    #follows the perfect route
     nodes = (variant.depot,) + variant.items
     dist = pairwise_distances(variant.grid, nodes)
     _, order = held_karp(dist)
@@ -56,6 +48,7 @@ def exact_agent(variant: Variant) -> List[int]:
 
 
 def random_agent(seed: int = 0) -> Callable[[Variant], List[int]]:
+    #random actions
     import random
 
     def agent(variant: Variant) -> List[int]:
@@ -73,7 +66,7 @@ AGENTS: Dict[str, Callable[[Variant], List[int]]] = {
 
 
 def evaluate(agent: Callable[[Variant], List[int]], reward_mode: str = "fixed", variants=None):
-    """Run an agent on every variant. Returns (rows, success_rate)."""
+    #runs an agent on all rooms, success is decided by the verifier
     variants = variants if variants is not None else all_variants()
     rows = []
     for v in variants:

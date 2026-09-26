@@ -1,15 +1,3 @@
-"""Deterministic generator for order-picking task variants.
-
-Three families of warehouse layouts, each parameterised by a seed:
-
-  open_floor    small empty floor, 3 items          (easy)
-  aisle_racks   classic rack/aisle warehouse, 5 items
-  bottleneck    two halves joined by one door, 5 items (trips up greedy agents)
-
-A variant is fully determined by its id "<family>:<seed>", so the verifier can
-rebuild it from the id alone and never has to trust anything the agent reports.
-"""
-
 from __future__ import annotations
 
 import functools
@@ -21,8 +9,7 @@ from typing import Dict, List, Sequence, Tuple
 
 Cell = Tuple[int, int]
 
-# action ids
-NORTH, SOUTH, WEST, EAST, PICK = 0, 1, 2, 3, 4
+NORTH, SOUTH, WEST, EAST, PICK = 0, 1, 2, 3, 4 #action ids
 MOVES: Dict[int, Cell] = {NORTH: (-1, 0), SOUTH: (1, 0), WEST: (0, -1), EAST: (0, 1)}
 ACTION_NAMES = {NORTH: "N", SOUTH: "S", WEST: "W", EAST: "E", PICK: "P"}
 N_ACTIONS = 5
@@ -30,23 +17,20 @@ N_ACTIONS = 5
 FAMILIES = ("open_floor", "aisle_racks", "bottleneck")
 SEEDS = (0, 1, 2, 3, 4)
 
-# Safety margin used by the reward design (see README). Generation asserts that
-# no variant exceeds it.
-MAX_ALLOWED_DISTANCE = 40
+MAX_ALLOWED_DISTANCE = 40 #no room may be larger than this
 
 
 @dataclass(frozen=True)
 class Variant:
-    """An immutable task instance."""
-
+    #one task = one room
     vid: str
     family: str
     seed: int
-    grid: Tuple[Tuple[int, ...], ...]  # 0 = floor, 1 = rack/wall
-    depot: Cell
+    grid: Tuple[Tuple[int, ...], ...] #0 = floor, 1 = rack
+    depot: Cell #the desk
     items: Tuple[Cell, ...]
-    budget: int             # max number of actions allowed
-    optimal_actions: int    # provably minimal number of actions
+    budget: int #max number of moves
+    optimal_actions: int #length of the perfect route
 
     @property
     def n_items(self) -> int:
@@ -85,16 +69,9 @@ class Variant:
         return "\n".join(rows)
 
 
-# --------------------------------------------------------------------------
-# grid utilities
-# --------------------------------------------------------------------------
-
 @functools.lru_cache(maxsize=None)
 def bfs_distances(grid: Tuple[Tuple[int, ...], ...], src: Cell) -> Dict[Cell, int]:
-    """Shortest walking distance (in moves) from src to every reachable floor cell.
-
-    Cached: the returned dict is shared, so callers must treat it as read-only.
-    """
+    #walking distance from src to every floor cell
     h, w = len(grid), len(grid[0])
     dist = {src: 0}
     q = deque([src])
@@ -109,7 +86,7 @@ def bfs_distances(grid: Tuple[Tuple[int, ...], ...], src: Cell) -> Dict[Cell, in
 
 
 def bfs_move_path(grid: Tuple[Tuple[int, ...], ...], src: Cell, dst: Cell) -> List[int]:
-    """A shortest sequence of move actions from src to dst."""
+    #shortest list of moves from src to dst
     if src == dst:
         return []
     h, w = len(grid), len(grid[0])
@@ -145,10 +122,7 @@ def pairwise_distances(grid, nodes: Sequence[Cell]) -> List[List[int]]:
 
 
 def held_karp(dist: List[List[int]]) -> Tuple[int, List[int]]:
-    """Exact shortest closed tour from node 0 visiting nodes 1..m and returning.
-
-    Returns (cost, visiting order as item indices 0..m-1).
-    """
+    #perfect order to visit the items
     m = len(dist) - 1
     if m == 0:
         return 0, []
@@ -188,10 +162,7 @@ def held_karp(dist: List[List[int]]) -> Tuple[int, List[int]]:
     return int(best), order
 
 
-# --------------------------------------------------------------------------
-# layouts
-# --------------------------------------------------------------------------
-
+#the three kinds of room
 def _layout_open_floor() -> Tuple[List[List[int]], Cell, int]:
     h, w = 7, 7
     grid = [[0] * w for _ in range(h)]
@@ -201,7 +172,7 @@ def _layout_open_floor() -> Tuple[List[List[int]], Cell, int]:
 def _layout_aisle_racks() -> Tuple[List[List[int]], Cell, int]:
     h, w = 9, 11
     grid = [[0] * w for _ in range(h)]
-    for c in (2, 4, 6, 8):          # racks
+    for c in (2, 4, 6, 8): #racks
         for r in range(1, h - 2):
             grid[r][c] = 1
     return grid, (0, 0), 5
@@ -210,9 +181,9 @@ def _layout_aisle_racks() -> Tuple[List[List[int]], Cell, int]:
 def _layout_bottleneck() -> Tuple[List[List[int]], Cell, int]:
     h, w = 11, 11
     grid = [[0] * w for _ in range(h)]
-    for c in range(w):              # dividing wall with a single door on the right
+    for c in range(w):
         grid[5][c] = 1
-    grid[5][9] = 0
+    grid[5][9] = 0 #the door
     return grid, (0, 0), 5
 
 
@@ -224,11 +195,11 @@ _LAYOUTS = {
 
 
 def _candidate_cells(family: str, grid, depot: Cell) -> List[Cell]:
+    #cells where an item can be placed
     h, w = len(grid), len(grid[0])
     reachable = bfs_distances(tuple(tuple(r) for r in grid), depot)
     cells = [c for c in reachable if c != depot]
-    if family == "aisle_racks":
-        # pick faces only: floor cells that touch a rack
+    if family == "aisle_racks": #only cells next to a rack
         cells = [
             (r, c) for (r, c) in cells
             if any(
@@ -241,6 +212,7 @@ def _candidate_cells(family: str, grid, depot: Cell) -> List[Cell]:
 
 @functools.lru_cache(maxsize=None)
 def make_variant(family: str, seed: int) -> Variant:
+    #builds one room from its family and seed
     if family not in _LAYOUTS:
         raise KeyError(f"unknown family {family!r}")
     grid_list, depot, n_items = _LAYOUTS[family]()
@@ -249,10 +221,9 @@ def make_variant(family: str, seed: int) -> Variant:
     candidates = _candidate_cells(family, grid_list, depot)
 
     if family == "bottleneck":
-        # force items on both sides of the wall so the door must be used
         top = [c for c in candidates if c[0] < 5 and c[0] >= 2]
         bottom = [c for c in candidates if c[0] > 5 and c[1] <= 6]
-        items = rng.sample(top, 2) + rng.sample(bottom, 3)
+        items = rng.sample(top, 2) + rng.sample(bottom, 3) #2 items in the top half, 3 in the bottom
     else:
         items = rng.sample(candidates, n_items)
     items = tuple(sorted(items))
@@ -260,9 +231,9 @@ def make_variant(family: str, seed: int) -> Variant:
     nodes = (depot,) + items
     dist = pairwise_distances(grid, nodes)
     tour_cost, _ = held_karp(dist)
-    optimal_actions = tour_cost + len(items)          # travel + one PICK per item
+    optimal_actions = tour_cost + len(items)
     slack = max(1, math.ceil(0.10 * optimal_actions))
-    budget = optimal_actions + slack
+    budget = optimal_actions + slack #perfect route + 10 %
 
     reach = bfs_distances(grid, depot)
     longest = max(max(row) for row in dist)
@@ -282,6 +253,7 @@ def make_variant(family: str, seed: int) -> Variant:
 
 
 def variant_from_id(vid: str) -> Variant:
+    #"aisle_racks:0" -> room
     family, _, seed = vid.partition(":")
     return make_variant(family, int(seed))
 

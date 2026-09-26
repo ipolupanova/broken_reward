@@ -1,18 +1,4 @@
-"""Automatic success checker. No human, no reward, no trust.
 
-The verifier receives one object: the final state of an episode. From it, it
-reads exactly two fields:
-
-    variant_id   -- rebuilds the task instance itself (generation is deterministic)
-    actions      -- the recorded action log
-
-Everything else in the submission (claimed_position, claimed_picked, a whole
-hand-written "goal state", ...) is ignored. The verifier re-simulates the
-dynamics with its own implementation -- deliberately not importing env.py -- so
-a bug or a cheat in the environment cannot make a wrong episode pass.
-
-verify() returns 1 (solved) or 0 (not solved). Nothing in between.
-"""
 
 from __future__ import annotations
 
@@ -22,16 +8,17 @@ from variants import MOVES, N_ACTIONS, PICK, Variant, variant_from_id
 
 
 def verify(final_state: Dict[str, Any], explain: bool = False):
-    """Score a submission: 1 if the order was legally picked, else 0."""
+    
     reason = "ok"
     score = 0
 
+    #check for correctness of submission
     if not isinstance(final_state, dict):
         reason = "submission is not a record"
         return (0, reason) if explain else 0
 
-    vid = final_state.get("variant_id")
-    actions = final_state.get("actions")
+    vid = final_state.get("variant_id") #task id
+    actions = final_state.get("actions") #actions log
 
     if not isinstance(vid, str):
         reason = "missing variant_id"
@@ -58,13 +45,13 @@ def verify(final_state: Dict[str, Any], explain: bool = False):
     elif pos != variant.depot:
         reason = f"picker ended at {pos}, not at depot {variant.depot}"
     else:
-        score, reason = 1, "solved"
+        score, reason = 1, "solved" #correct 
 
     return (score, reason) if explain else score
 
 
 def _replay(variant: Variant, actions: List[int]) -> Tuple[bool, str, Tuple[int, int], List[bool]]:
-    """Independent re-simulation. Returns (legal, reason, final_pos, picked)."""
+    #replays the action log
     pos = variant.depot
     picked = [False] * variant.n_items
     for t, action in enumerate(actions):
