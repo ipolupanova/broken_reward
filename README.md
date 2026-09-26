@@ -26,7 +26,7 @@ bash run.sh
 | [run_all.py](run_all.py), [run.sh](run.sh) | run command|
 
 
-## The setting [`Variant`](variants.py#L39)
+## The setting [`Variant`](variants.py#L24)
 
 We are in a furniture warehouse (the big Swedish one, for example) :)
 The only person working is the picker, who walks the storage rooms collecting
@@ -48,14 +48,14 @@ D..........      D   desk: the picker starts and ends here
 
 ---
 
-## The task [`env.py`](env.py), [`OrderPickingEnv`](env.py#L63)
+## The task [`env.py`](env.py), [`OrderPickingEnv`](env.py#L39)
 
-The picker has to pick every item ([`Variant.items`](variants.py#L47)) of the order and bring them back to the
-desk ([`Variant.depot`](variants.py#L46)) before the shift ends. The shift is a fixed budget of moves ([`Variant.budget`](variants.py#L48)).
+The picker has to pick every item ([`Variant.items`](variants.py#L31)) of the order and bring them back to the
+desk ([`Variant.depot`](variants.py#L30)) before the shift ends. The shift is a fixed budget of moves ([`Variant.budget`](variants.py#L32)).
 
-- [`reset()`](env.py#L74): the picker clocks in at the desk with an empty cart ([`_State.picked`](env.py#L56))
-- [`step(action)`](env.py#L80): the picker does one action, which costs one move ([`_State.steps`](env.py#L57))
-- [`observation()`](env.py#L198): everything the picker knows at this moment, for example could look like: 
+- [`reset()`](env.py#L49): the picker clocks in at the desk with an empty cart ([`_State.picked`](env.py#L32))
+- [`step(action)`](env.py#L55): the picker does one action, which costs one move ([`_State.steps`](env.py#L33))
+- [`observation()`](env.py#L157): everything the picker knows at this moment, for example could look like: 
 
 ```python
 obs = {
@@ -68,58 +68,58 @@ obs = {
 }
 ```
 
-The picker can do exactly five things ([action ids](variants.py#L25)):
+The picker can do exactly five things ([action ids](variants.py#L12)):
 
 | action | id | what happens |
 |---|---|---|
-| step north | `0` | one cell up ([`MOVES`](variants.py#L26)) |
+| step north | `0` | one cell up ([`MOVES`](variants.py#L13)) |
 | step south | `1` | one cell down |
 | step west | `2` | one cell left |
 | step east | `3` | one cell right |
-| pick | `4` | put the item he is standing at into the cart ([`env.py`](env.py#L127-L131)) |
+| pick | `4` | put the item he is standing at into the cart ([`env.py`](env.py#L102-L106)) |
 
 
-### The reward [`_naive_reward()`](env.py#L162)
+### The reward [`_naive_reward()`](env.py#L135)
 
-Management sets up a reward system ([`_naive_reward()`](env.py#L162)) to keep the picker motivated:
+Management sets up a reward system ([`_naive_reward()`](env.py#L135)) to keep the picker motivated:
 
 - **1 point**  for every pick on an item's cell
-- **0.1 points**  for every step that brings the picker closer to the nearest item still on the order ([`_distance_to_target()`](env.py#L141))
+- **0.1 points**  for every step that brings the picker closer to the nearest item still on the order ([`_distance_to_target()`](env.py#L116))
 - **5 points** for bringing the complete order back to the desk
 - **−0.01 points** for every move, so taking a long detour costs something
 
 Management looks only at the points, and counts a shift as a *good shift* if it
-earns at least **number of items + 3** ([`success_threshold()`](env.py#L48)) (8 points for an order of five-items). 
+earns at least **number of items + 3** ([`success_threshold()`](env.py#L23)) (8 points for an order of five-items). 
 
-## The verifier [`verifier.py`](verifier.py), [`verify()`](verifier.py#L24)
+## The verifier [`verifier.py`](verifier.py), [`verify()`](verifier.py#L10)
 
 The verifier decides whether an episode actually solved the task. It returns 1 or
 0 and never looks at the reward.
 
-It receives the final state of an episode ([`final_state()`](env.py#L224)) and
+It receives the final state of an episode ([`final_state()`](env.py#L182)) and
 reads only two things from it: which room was played
-([`variant_id`](verifier.py#L33)) and the list of actions taken
-([`actions`](verifier.py#L34)).
+([`variant_id`](verifier.py#L20)) and the list of actions taken
+([`actions`](verifier.py#L21)).
 
 It then:
 
 1. rebuilds the room from its `variant_id`
-   ([`variant_from_id()`](variants.py#L284)), so the room is never taken from
+   ([`variant_from_id()`](variants.py#L255)), so the room is never taken from
    the episode itself,
-2. replays every action from the starting point ([`_replay()`](verifier.py#L66)) and
+2. replays every action from the starting point ([`_replay()`](verifier.py#L53)) and
    returns 0 at the first illegal action, or if there are more actions than the
    budget allows,
 3. returns 1 only if every item was picked and the picker ended at the starting point.
 
 | case | score | test |
 |---|---|---|
-| no actions taken | 0 | [`test_initial_state_scores_zero`](tests.py#L44) |
-| the optimal route | 1 | [`test_correct_solution_scores_one`](tests.py#L54) |
-| an illegal action, e.g. walking off the grid | 0 | [`test_invalid_action_scores_zero`](tests.py#L62) |
-| the final state says the task is done, but replaying its actions shows it wasn't | 0 | [`test_written_goal_state_scores_zero`](tests.py#L88) |
-| every item picked, but not back at the starting point | 0 | [`test_all_picked_but_not_home_scores_zero`](tests.py#L125) |
+| no actions taken | 0 | [`test_initial_state_scores_zero`](tests.py#L31) |
+| the optimal route | 1 | [`test_correct_solution_scores_one`](tests.py#L40) |
+| an illegal action, e.g. walking off the grid | 0 | [`test_invalid_action_scores_zero`](tests.py#L47) |
+| the final state says the task is done, but replaying its actions shows it wasn't | 0 | [`test_written_goal_state_scores_zero`](tests.py#L67) |
+| every item picked, but not back at the starting point | 0 | [`test_all_picked_but_not_home_scores_zero`](tests.py#L101) |
 
-## Three task variants = three kinds of room [`variants.py`](variants.py), [`make_variant()`](variants.py#L243)
+## Three task variants = three kinds of room [`variants.py`](variants.py), [`make_variant()`](variants.py#L214)
 
 Each kind of room is generated with 5 different item layouts, so
 there are 15 tasks in total:
@@ -136,15 +136,15 @@ distances, Held–Karp for the order of items), and the move budget for a shift 
 
 ---
 
-## Baseline agents [`baseline.py`](baseline.py), [`evaluate()`](baseline.py#L75)
+## Baseline agents [`baseline.py`](baseline.py), [`evaluate()`](baseline.py#L68)
 
 | picker | strategy | solved |
 |---|---|---|
-| [`exact_agent`](baseline.py#L43) | follows the perfect route | 15 / 15 |
-| [`nearest_neighbour_agent`](baseline.py#L28) | always walks to the closest remaining item | 14 / 15 (runs out of moves in `aisle_racks:1`) |
-| [`random_agent`](baseline.py#L58) | random actions | 0 / 15 (always makes an illegal move early) |
+| [`exact_agent`](baseline.py#L34) | follows the perfect route | 15 / 15 |
+| [`nearest_neighbour_agent`](baseline.py#L18) | always walks to the closest remaining item | 14 / 15 (runs out of moves in `aisle_racks:1`) |
+| [`random_agent`](baseline.py#L50) | random actions | 0 / 15 (always makes an illegal move early) |
 
-[`evaluate()`](baseline.py#L75) runs a picker on all rooms and asks the
+[`evaluate()`](baseline.py#L68) runs a picker on all rooms and asks the
 verifier. This shows every room is solvable.
 
 ```
@@ -177,7 +177,7 @@ if d_after < d_before:
 
 ---
 
-## The fix [`_fixed_reward()`](env.py#L180)
+## The fix [`_fixed_reward()`](env.py#L146)
 
 1. An item pays 1 point only the first time it goes into the cart.
 2. The distance bonus works both ways: +0.1 per step closer, −0.1 per step away. A walk that ends where it started earns exactly 0. 
@@ -209,13 +209,13 @@ Run with `bash run.sh` or `python3 tests.py`
 
 | test | what it checks |
 |---|---|
-| [`test_naive_reward_is_exploitable`](tests.py#L170) | the old reward is fooled in 15 / 15 rooms |
-| [`test_naive_reward_pays_for_closed_loops`](tests.py#L186) | pacing back and forth pays under the old reward |
-| [`test_fix_blocks_the_exploit`](tests.py#L197) | the exact action lists of both loopholes, rescored with the fixed reward, stay below the good-shift line in every room (best: 1.21 points) |
-| [`test_fixed_shaping_is_free_on_closed_loops`](tests.py#L207) | walking out and back earns exactly 0 |
-| [`test_fixed_reward_has_no_false_positives_under_random_play`](tests.py#L233) | 45,000 random shifts: 4,903 fool the old reward, 0 fool the new one |
-| [`test_fixed_reward_gap_is_proven_not_just_observed`](tests.py#L268) | the bounds from the fix hold in every room |
-| [`test_fixed_reward_prefers_shorter_routes`](tests.py#L295) | a longer valid route still earns less than the perfect one |
+| [`test_naive_reward_is_exploitable`](tests.py#L143) | the old reward is fooled in 15 / 15 rooms |
+| [`test_naive_reward_pays_for_closed_loops`](tests.py#L158) | pacing back and forth pays under the old reward |
+| [`test_fix_blocks_the_exploit`](tests.py#L167) | the exact action lists of both loopholes, rescored with the fixed reward, stay below the good-shift line in every room (best: 1.21 points) |
+| [`test_fixed_shaping_is_free_on_closed_loops`](tests.py#L176) | walking out and back earns exactly 0 |
+| [`test_fixed_reward_has_no_false_positives_under_random_play`](tests.py#L201) | 45,000 random shifts: 4,903 fool the old reward, 0 fool the new one |
+| [`test_fixed_reward_gap_is_proven_not_just_observed`](tests.py#L235) | the bounds from the fix hold in every room |
+| [`test_fixed_reward_prefers_shorter_routes`](tests.py#L249) | a longer valid route still earns less than the perfect one |
 
 The remaining tests cover the verifier and the environment.
 
