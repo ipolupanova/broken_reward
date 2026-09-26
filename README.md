@@ -193,11 +193,11 @@ if goal:
 
 *Why this fix can't be tricked now*
 
-- an unsolved shift earns at most `(items − 1) + 0.1 × distance from desk to nearest item`
+- an unsolved shift earns at most `items − 0.1 + 0.1 × distance from desk to nearest item` (the worst case: picking every item but stopping one step before the desk)
 - a solved shift earns at least `items + 5 − 0.01 × budget`
 
 The good-shift line `items + 3` lies strictly between the two in every room.
-In the tightest room (`bottleneck:2`), an unsolved shift earns at most 5.1, the
+In the tightest room (`bottleneck:2`), an unsolved shift earns at most 6.0, the
 line is 8, and a solved one earns at least 9.41.
 
 
@@ -215,7 +215,7 @@ Run with `bash run.sh` or `python3 tests.py`
 | [`test_fixed_shaping_is_free_on_closed_loops`](tests.py#L207) | walking out and back earns exactly 0 |
 | [`test_fixed_reward_has_no_false_positives_under_random_play`](tests.py#L233) | 45,000 random shifts: 4,903 fool the old reward, 0 fool the new one |
 | [`test_fixed_reward_gap_is_proven_not_just_observed`](tests.py#L268) | the bounds from the fix hold in every room |
-| [`test_fixed_reward_prefers_shorter_routes`](tests.py#L281) | a longer valid route still earns less than the perfect one |
+| [`test_fixed_reward_prefers_shorter_routes`](tests.py#L295) | a longer valid route still earns less than the perfect one |
 
 The remaining tests cover the verifier and the environment.
 
