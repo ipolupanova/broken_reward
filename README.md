@@ -2,7 +2,7 @@
 
 My small RL environment for picking up items from an order in a furniture warehouse. There is a deliberately broken reward, an exploit of it, a fix, and tests proving the fix works. 
 
-## Run it [`run.sh`](run.sh), [`run_all.py`](run_all.py)
+## Run it 
 
 ```bash
 bash run.sh
