@@ -8,7 +8,7 @@ My small RL environment for picking up items from an order in a furniture wareho
 bash run.sh
 ```
 
-`./run.sh` and `python3 run_all.py` do the same. Needs Python 3.9 or newer.
+or `./run.sh` or `python3 run_all.py`. Needs Python 3.9 or newer.
 
 ---
 
